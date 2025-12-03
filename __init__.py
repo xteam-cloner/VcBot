@@ -312,6 +312,10 @@ async def get_from_queue(chat_id):
 # --------------------------------------------------
 
 
+# ... (Baris impor dan definisi fungsi lainnya) ...
+
+# --------------------------------------------------
+
 async def download(query):
     if query.startswith("https://") and "youtube" not in query.lower():
         thumb, duration = None, "Unknown"
@@ -323,23 +327,36 @@ async def download(query):
         title = data["title"]
         duration = data.get("duration") or "♾"
         thumb = f"https://i.ytimg.com/vi/{data['id']}/hqdefault.jpg"
-    dl = await get_stream_link(link)
+        
+    # Memanggil fungsi get_stream_link yang diperbaiki
+    dl = await get_stream_link(link) 
+    
+    if dl is None:
+        # Jika pengambilan stream gagal, kembalikan None
+        return None, thumb, title, link, duration
+        
     return dl, thumb, title, link, duration
 
 
 async def get_stream_link(ytlink):
     """
-    info = YoutubeDL({}).extract_info(url=ytlink, download=False)
-    k = ""
-    for x in info["formats"]:
-        h, w = ([x["height"], x["width"]])
-        if h and w:
-            if h <= 720 and w <= 1280:
-                k = x["url"]
-    return k
+    Mengambil URL stream audio-only terbaik yang stabil dari YouTube.
     """
-    stream = await bash(f'yt-dlp -g -f "best[height<=?720][width<=?1280]" {ytlink}')
-    return stream[0]
+    # Menggunakan opsi format yt-dlp: 'bestaudio/best' untuk memastikan hanya audio yang dipilih.
+    # Ini menghilangkan risiko mendapatkan stream gabungan video/audio yang tidak stabil (HLS/DASH).
+    
+    # yt-dlp -g -f "bestaudio/best" akan mencetak URL stream langsung
+    stream = await bash(f'yt-dlp -g -f "bestaudio/best" {ytlink}')
+    
+    # stream[0] akan berisi URL audio langsung.
+    if stream and stream[0].startswith("http"):
+        # Mengembalikan URL yang bersih (tanpa spasi di akhir)
+        return stream[0].strip()
+    
+    LOGS.error(f"yt-dlp gagal mendapatkan stream link untuk {ytlink}. Output: {stream}")
+    return None
+
+# ... (Fungsi dl_playlist, vid_download, file_download, dan bagian bawah lainnya) ...
 
 
 async def vid_download(query):
