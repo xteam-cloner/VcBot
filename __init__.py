@@ -354,7 +354,8 @@ async def download_yt_file(ytlink):
         os.makedirs("vcbot/download")
         
     ytd_opts = {
-        "format": "bestaudio/best",
+        # 💡 Perbaikan: Mengubah format menjadi 'best' agar yt-dlp memilih format yang paling kompatibel
+        "format": "best", 
         "outtmpl": "vcbot/download/%(id)s.%(ext)s", 
         "prefer_ffmpeg": True,
         "addmetadata": True,
@@ -548,4 +549,4 @@ async def file_download(event_or_message, message, fast_download=True):
         if local_path and os.path.exists(local_path):
              os.remove(local_path)
         return None, None, None, None, None
-        
+                
