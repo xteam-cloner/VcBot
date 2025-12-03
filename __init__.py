@@ -130,7 +130,7 @@ class Player:
             os.remove(source)
         await self.play_from_queue()
 
-    async def play_from_queue(self):
+        async def play_from_queue(self):
         chat_id = self._chat
         if chat_id in VIDEO_ON:
             await self.group_call.stop_video()
@@ -140,6 +140,22 @@ class Player:
                 chat_id
             )
             
+            # 🛑 PERBAIKAN AKHIR: VALIDASI SUMBER LAGU DARI ANTRIAN
+            # Pastikan song_source bukan None, atau hanya string query mentah.
+            if not song_source or not (os.path.exists(song_source) or is_url_ok(song_source)):
+                 LOGS.error(f"Invalid song source detected in queue: {song_source}. Skipping.")
+                 await vcClient.send_message(
+                     self._current_chat,
+                     "⚠️ **ERROR MEDIA:** File di antrian tidak valid. Melanjutkan ke antrian berikutnya.",
+                     parse_mode="html",
+                 )
+                 VC_QUEUE[chat_id].pop(pos)
+                 if not VC_QUEUE[chat_id]:
+                      VC_QUEUE.pop(chat_id)
+                 await self.play_from_queue() 
+                 return
+            # -----------------------------------------------
+
             if song_source and "youtube.com" in song_source:
                  local_path, thumb, title, link, dur = await download_yt_file(song_source)
                  if not local_path:
@@ -432,6 +448,7 @@ async def vid_download(query):
         return None, None, None, None, None
         
     try:
+        # 1. Search for the video
         search = VideosSearch(query, limit=1).result()
         
         if not search or not search.get("result"):
@@ -441,6 +458,7 @@ async def vid_download(query):
         data = search["result"][0]
         link = data["link"]
         
+        # 2. Download the video file
         video, thumb, title, link, duration = await download_yt_file(link)
         
         if not video:
