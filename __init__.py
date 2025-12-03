@@ -163,12 +163,21 @@ class Player:
                 VIDEO_ON.pop(chat_id)
             
             try:
+                # Perbaikan KeyError: Memastikan kunci antrian ada sebelum diakses
+                if not VC_QUEUE.get(chat_id):
+                    raise KeyError
+                    
                 song_source, title, link, thumb, from_user, pos, dur = await get_from_queue(
                     chat_id
                 )
             except (IndexError, KeyError):
+                # Penanganan antrian kosong
                 await self.group_call.stop()
-                del CLIENTS[self._chat]
+                
+                # Perbaikan KeyError: Memastikan kunci klien ada sebelum dihapus
+                if self._chat in CLIENTS:
+                    del CLIENTS[self._chat]
+                
                 await vcClient.send_message(
                     self._current_chat,
                     f"• Successfully Left Vc : <code>{chat_id}</code> •",
@@ -581,7 +590,4 @@ async def file_download(event_or_message, message, fast_download=True):
         
     except Exception as e:
         LOGS.exception(f"Failed to process mediainfo: {e}")
-        if local_path and os.path.exists(local_path):
-             os.remove(local_path)
-        return None, None, None, None, None
-        
+     
