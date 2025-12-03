@@ -131,14 +131,14 @@ class Player:
         await self.play_from_queue()
 
         async def play_from_queue(self):
-        chat_id = self._chat
-        if chat_id in VIDEO_ON:
-            await self.group_call.stop_video()
-            VIDEO_ON.pop(chat_id)
-        try:
-            song_source, title, link, thumb, from_user, pos, dur = await get_from_queue(
-                chat_id
-            )
+            chat_id = self._chat
+            if chat_id in VIDEO_ON:
+                await self.group_call.stop_video()
+                VIDEO_ON.pop(chat_id)
+                try:
+                    song_source, title, link, thumb, from_user, pos, dur = await get_from_queue(
+                        chat_id
+                    )
             
             # 🛑 PERBAIKAN AKHIR: VALIDASI SUMBER LAGU DARI ANTRIAN
             # Pastikan song_source bukan None, atau hanya string query mentah.
