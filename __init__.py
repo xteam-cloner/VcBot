@@ -157,7 +157,10 @@ class Player:
             if song_source and "youtube.com" in song_source:
                  local_path, thumb, title, link, dur = await download_yt_file(song_source)
                  if not local_path:
-                      raise Exception("Failed to download next song from queue.")
+                      # Lanjutkan ke lagu berikutnya jika download gagal
+                      LOGS.error(f"Failed to download next song from queue: {song_source}")
+                      await self.play_from_queue() 
+                      return
                  song_source = local_path
             
             try:
@@ -337,6 +340,7 @@ async def download_yt_file(ytlink):
         os.makedirs("vcbot/download")
         
     # Atur opsi download audio-only
+    # Perhatikan 'outtmpl' HANYA menggunakan path relatif yang diinginkan.
     ytd_opts = {
         "format": "bestaudio/best",
         "outtmpl": "vcbot/download/%(id)s.%(ext)s", 
@@ -347,7 +351,7 @@ async def download_yt_file(ytlink):
         "quiet": True, 
         "no_warnings": True,
         "forcethumbnail": True,
-        "writethumbnail": True, # Untuk thumbnail lokal jika diperlukan
+        "writethumbnail": True,
     }
     
     try:
@@ -360,10 +364,19 @@ async def download_yt_file(ytlink):
                 info = info['entries'][0]
                 
             # Mengambil path file yang diunduh secara lokal
+            # Path ini seharusnya sudah benar karena 'outtmpl' di atas
             local_path = ydl.prepare_filename(info) 
-            # Perbaiki path relatif
-            if not os.path.isabs(local_path):
-                 local_path = os.path.join("vcbot/download", local_path)
+            
+            # KOREKSI/VERIFIKASI PATH
+            # Ini untuk memastikan bahwa path adalah absolut atau relatif yang benar.
+            # Menggunakan os.path.join untuk memastikan path terstruktur dengan benar
+            intended_dir = "vcbot/download"
+            # Cek jika path yang dihasilkan sudah benar (mengandung intended_dir)
+            if not local_path.startswith(intended_dir):
+                 # Jika ydl.prepare_filename() entah bagaimana hanya mengembalikan nama file,
+                 # kita perbaiki dengan menambahkan direktori.
+                 local_path = os.path.join(intended_dir, os.path.basename(local_path))
+
 
             # Cari informasi yang relevan
             title = info.get("title", "Unknown")
@@ -388,6 +401,8 @@ async def download(query):
         return dl, thumb, title, link, duration
     else:
         # Kasus Pencarian/Link YouTube
+        if not VideosSearch:
+             return None, None, None, None, None
         search = VideosSearch(query, limit=1).result()
         if not search["result"]:
             return None, None, None, None, None
@@ -429,6 +444,8 @@ async def dl_playlist(chat, from_user, link):
     # TAMBAHKAN LAGU SISA KE QUEUE (hanya simpan URL)
     for url in links[1:]:
         try:
+            if not VideosSearch:
+                 continue
             search = VideosSearch(url, limit=1).result()
             if not search["result"]:
                  continue
@@ -450,29 +467,14 @@ async def dl_playlist(chat, from_user, link):
 
 # --- FUNGSI LAMA (Disisakan untuk kompatibilitas jika diperlukan) ---
 async def vid_download(query):
+    if not VideosSearch:
+        return None, None, None, None, None
     search = VideosSearch(query, limit=1).result()
     data = search["result"][0]
     link = data["link"]
     # Menggunakan download file penuh untuk video juga
     video, thumb, title, link, duration = await download_yt_file(link)
     return video, thumb, title, link, duration
-
-async def file_download(event_or_message, message, fast_download=True):
-    # Asumsi fungsi ini didefinisikan di tempat lain atau di dalam __init__.py 
-    # untuk menangani file audio/video yang dibalas.
-    # Jika tidak ada, Anda perlu mendefinisikannya berdasarkan struktur Ultroid.
-    # Contoh stub:
-    if not message.media:
-        return None, None, None, None, None
-    
-    # ... (Logika downloader, mediainfo, dll. di sini) ...
-    
-    # Jika berhasil, kembalikan:
-    # return local_path, thumb, song_name, link, duration
-    pass
-# -----------------------------------------------------------------------
-
-# --- Tambahkan atau verifikasi fungsi file_download di sini ---
 
 async def file_download(event_or_message, message, fast_download=True):
     """
@@ -489,6 +491,7 @@ async def file_download(event_or_message, message, fast_download=True):
 
     await event_or_message.edit("• Mengunduh media...")
     
+    local_path = None
     try:
         # Menggunakan downloader dari xteam.fns.helper
         # Asumsi 'downloader' dapat menangani objek Message/Media dan mengembalikan path lokal
@@ -502,10 +505,10 @@ async def file_download(event_or_message, message, fast_download=True):
 
     try:
         # Mengambil informasi media
+        # Fungsi mediainfo ini diasumsikan bekerja dengan baik dan mengembalikan string/info yang relevan.
         info = mediainfo(local_path) 
         
-        # Ekstrak data yang diperlukan (asumsi mediainfo mengembalikan string yang dapat diparse)
-        # Karena mediainfo tidak selalu mengembalikan objek terstruktur, kita lakukan ekstraksi dasar
+        # Ekstrak data yang diperlukan
         song_name = getattr(message.document, 'file_name', os.path.basename(local_path))
         duration_sec = getattr(message.document, 'duration', None)
         duration = time_formatter(duration_sec * 1000) if duration_sec else "♾"
@@ -524,8 +527,7 @@ async def file_download(event_or_message, message, fast_download=True):
     except Exception as e:
         LOGS.exception(f"Gagal memproses mediainfo: {e}")
         # Hapus file yang sudah terlanjur didownload jika gagal diproses
-        if os.path.exists(local_path):
+        if local_path and os.path.exists(local_path):
              os.remove(local_path)
         return None, None, None, None, None
-
-# --- Pastikan fungsi lain yang bergantung pada impor ada, seperti downloader (dari xteam.fns.helper) ---
+                
