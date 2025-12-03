@@ -128,10 +128,8 @@ class Player:
     async def playout_ended_handler(self, call, source, mtype):
         if os.path.exists(source):
             os.remove(source)
-        # Memanggil metode terpisah untuk melanjutkan antrian
         await self.play_from_queue()
 
-    # Metode baru untuk menangani logika antrian dan pemutaran
     async def play_from_queue(self):
         chat_id = self._chat
         
@@ -140,13 +138,11 @@ class Player:
                 await self.group_call.stop_video()
                 VIDEO_ON.pop(chat_id)
             
-            # Ambil item berikutnya dari antrian
             try:
                 song_source, title, link, thumb, from_user, pos, dur = await get_from_queue(
                     chat_id
                 )
             except (IndexError, KeyError):
-                # Antrian kosong, tinggalkan VC
                 await self.group_call.stop()
                 del CLIENTS[self._chat]
                 await vcClient.send_message(
@@ -156,7 +152,6 @@ class Player:
                 )
                 return
             
-            # 🛑 VALIDASI SUMBER LAGU DARI ANTRIAN
             if not song_source or (
                 not os.path.exists(song_source) and not is_url_ok(song_source)
             ):
@@ -166,7 +161,6 @@ class Player:
                      "⚠️ **ERROR MEDIA:** File di antrian tidak valid. Melanjutkan ke antrian berikutnya.",
                      parse_mode="html",
                  )
-                 # Hapus item yang invalid dan lanjutkan
                  VC_QUEUE[chat_id].pop(pos)
                  if not VC_QUEUE[chat_id]:
                       VC_QUEUE.pop(chat_id)
@@ -184,12 +178,18 @@ class Player:
                       return
                  song_source = local_path
             
-            # Mulai pemutaran audio
             try:
-                await self.group_call.start_audio(song_source) 
+                if self._video:
+                     await self.group_call.start_video(song_source)
+                else:
+                     await self.group_call.start_audio(song_source) 
+
             except ParticipantJoinMissingError:
                 await self.vc_joiner()
-                await self.group_call.start_audio(song_source)
+                if self._video:
+                     await self.group_call.start_video(song_source)
+                else:
+                     await self.group_call.start_audio(song_source)
             except av.error.InvalidDataError:
                  LOGS.error(f"Media Error: File/Stream invalid or corrupted: {song_source}")
                  await vcClient.send_message(
@@ -203,7 +203,6 @@ class Player:
                  await self.play_from_queue()
                  return
             
-            # Kirim pesan Now Playing
             if MSGID_CACHE.get(chat_id):
                 await MSGID_CACHE[chat_id].delete()
                 del MSGID_CACHE[chat_id]
@@ -224,13 +223,11 @@ class Player:
                 )
             MSGID_CACHE.update({chat_id: xx})
             
-            # Hapus item dari antrian setelah berhasil diputar
             VC_QUEUE[chat_id].pop(pos)
             if not VC_QUEUE[chat_id]:
                 VC_QUEUE.pop(chat_id)
 
         except Exception as er:
-            # Catch semua error lainnya selama proses dequeue/play
             LOGS.exception(er)
             await vcClient.send_message(
                 self._current_chat,
@@ -350,7 +347,7 @@ async def get_from_queue(chat_id):
 
 async def download_yt_file(ytlink):
     if not YoutubeDL:
-        LOGS.error("yt-dlp not installed!")
+        LOGS.error("'yt-dlp' not installed!")
         return None, None, None, None, None
         
     if not os.path.isdir("vcbot/download"):
@@ -371,8 +368,7 @@ async def download_yt_file(ytlink):
     
     try:
         with YoutubeDL(ytd_opts) as ydl:
-            # 💡 Perbaikan: Pastikan ytlink adalah ID atau URL yang dapat diunduh
-            if "youtube.com" not in ytlink and "youtu.be" not in ytlink:
+            if "youtube.com" not in ytlink and "youtu.be" not in ytlink and len(ytlink) <= 11 and not ytlink.startswith("http"):
                  ytlink = f"https://www.youtube.com/watch?v={ytlink}"
 
             info = ydl.extract_info(ytlink, download=True)
@@ -399,22 +395,17 @@ async def download_yt_file(ytlink):
         LOGS.error(f"Failed to download YT file: {e}")
         return None, None, None, None, None
 
-# Fungsi Pembantu untuk Membersihkan URL/Query
 def clean_youtube_query(query):
-    # Pola Regex untuk mengekstrak ID Video dari berbagai format YouTube/youtu.be
     match = re.search(r'(?:youtu\.be\/|v=|embed\/|watch\?v=)([^&?]+)', query)
     if match:
-        return match.group(1) # Mengembalikan ID video murni
+        return match.group(1)
     
-    # Jika bukan URL, anggap sebagai kata kunci
     if not query.startswith("http"):
         return query
         
-    # Jika URL, tapi tidak dikenali regex, hapus parameter '?...'
     return query.split('?')[0]
 
 async def download(query):
-    # 💡 PERBAIKAN: Bersihkan URL/Query sebelum digunakan untuk pencarian
     cleaned_query = clean_youtube_query(query)
 
     if cleaned_query.startswith("https://") and "youtube" not in cleaned_query.lower():
@@ -426,20 +417,16 @@ async def download(query):
         if not VideosSearch:
              return None, None, None, None, None
         
-        # Jika cleaned_query adalah ID murni, kita bisa langsung unduh daripada mencari ulang
         if len(cleaned_query) <= 11 and not cleaned_query.startswith("http"):
-            search_term = cleaned_query
+            link = cleaned_query
         else:
-            search_term = cleaned_query
+            search = VideosSearch(cleaned_query, limit=1).result()
+            if not search["result"]:
+                return None, None, None, None, None
             
-        search = VideosSearch(search_term, limit=1).result()
-        if not search["result"]:
-            return None, None, None, None, None
-            
-        data = search["result"][0]
-        link = data["link"]
+            data = search["result"][0]
+            link = data["link"]
         
-        # Gunakan link YouTube yang valid dari hasil pencarian untuk diunduh
         local_path, thumb, title, link, duration = await download_yt_file(link)
         
         return local_path, thumb, title, link, duration
@@ -468,7 +455,6 @@ async def dl_playlist(chat, from_user, link):
         try:
             if not VideosSearch:
                  continue
-            # Membersihkan URL sebelum pencarian (untuk mendapatkan info durasi/thumb)
             cleaned_url = clean_youtube_query(url)
             
             search = VideosSearch(cleaned_url, limit=1).result()
@@ -493,11 +479,9 @@ async def vid_download(query):
         LOGS.error("VideosSearch library not available.")
         return None, None, None, None, None
     
-    # 💡 PERBAIKAN: Bersihkan URL/Query sebelum digunakan untuk pencarian
     cleaned_query = clean_youtube_query(query)
         
     try:
-        # 1. Search for the video
         search = VideosSearch(cleaned_query, limit=1).result()
         
         if not search or not search.get("result"):
@@ -507,7 +491,6 @@ async def vid_download(query):
         data = search["result"][0]
         link = data["link"]
         
-        # 2. Download the video file
         video, thumb, title, link, duration = await download_yt_file(link)
         
         if not video:
@@ -565,3 +548,4 @@ async def file_download(event_or_message, message, fast_download=True):
         if local_path and os.path.exists(local_path):
              os.remove(local_path)
         return None, None, None, None, None
+        
