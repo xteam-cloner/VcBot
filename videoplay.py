@@ -1,19 +1,3 @@
-# Ultroid - UserBot
-# Copyright (C) 2021-2022 TeamUltroid
-#
-# This file is a part of < https://github.com/TeamUltroid/Ultroid/ >
-# PLease read the GNU Affero General Public License in
-# <https://www.github.com/TeamUltroid/Ultroid/blob/main/LICENSE/>.
-
-"""
-✘ Commands Available
-
-`{i}videoplay <song name/url/m3u8 links/reply to video>`
-   Stream Videos in chat.
-   you can use remotely too
-   like `{i}videoplay @chat <input/reply>`
-
-"""
 import re, asyncio
 from telethon.errors.rpcerrorlist import ChatSendMediaForbiddenError
 from . import vc_asst, Player, get_string, inline_mention, is_url_ok, mediainfo, vid_download, file_download,LOGS
@@ -42,19 +26,19 @@ async def video_c(event):
                 pass
         else:
             song = input
+            
     if not (reply or song):
         return await xx.eor(get_string("vcbot_15"), time=5)
     await xx.eor(get_string("vcbot_20"))
+    
     if reply and reply.media and mediainfo(reply.media).startswith("video"):
         song, thumb, title, link, duration = await file_download(xx, reply)
     else:
         is_link = is_url_ok(song)
         if is_link is False:
             return await xx.eor(f"`{song}`\n\nNot a playable link.🥱")
-        if is_link is None:
-            song, thumb, title, link, duration = await vid_download(song)
-        elif re.search("youtube", song) or re.search("youtu", song):
-            song, thumb, title, link, duration = await vid_download(song)
+        if is_link is None or re.search("youtube", song) or re.search("youtu", song):
+            song, thumb, title, link, duration = await vid_download(song) 
         else:
             song, thumb, title, link, duration = (
                 song,
@@ -63,9 +47,17 @@ async def video_c(event):
                 song,
                 "♾",
             )
+            
+    if not song:
+        return await xx.eor(
+            "❌ **Gagal:** Tidak dapat menemukan media atau pengunduhan gagal. Coba kata kunci atau link lain.",
+            time=8,
+        )
+
     ultSongs = Player(chat, xx, True)
     if not (await ultSongs.vc_joiner()):
         return
+        
     text = "🎸 **Now playing:** [{}]({})\n⏰ **Duration:** `{}`\n👥 **Chat:** `{}`\n🙋‍♂ **Requested by:** {}".format(
         title, link, duration, chat, from_user
     )
@@ -77,6 +69,8 @@ async def video_c(event):
         )
     except ChatSendMediaForbiddenError:
         await xx.reply(text, link_preview=False)
+        
     await asyncio.sleep(1)
     await ultSongs.group_call.start_video(song, with_audio=True)
     await xx.delete()
+   
