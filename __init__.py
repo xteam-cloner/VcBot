@@ -333,13 +333,13 @@ async def download_yt_file(ytlink):
         return None, None, None, None, None
         
     # Buat direktori download jika belum ada
-    if not os.path.isdir("vcbot/downloads"):
-        os.makedirs("vcbot/downloads")
+    if not os.path.isdir("vcbot/download"):
+        os.makedirs("vcbot/download")
         
     # Atur opsi download audio-only
     ytd_opts = {
         "format": "bestaudio/best",
-        "outtmpl": "vcbot/downloads/%(id)s.%(ext)s", 
+        "outtmpl": "vcbot/download/%(id)s.%(ext)s", 
         "prefer_ffmpeg": True,
         "addmetadata": True,
         "geo-bypass": True,
@@ -363,7 +363,7 @@ async def download_yt_file(ytlink):
             local_path = ydl.prepare_filename(info) 
             # Perbaiki path relatif
             if not os.path.isabs(local_path):
-                 local_path = os.path.join("vcbot/downloads", local_path)
+                 local_path = os.path.join("vcbot/download", local_path)
 
             # Cari informasi yang relevan
             title = info.get("title", "Unknown")
@@ -483,7 +483,7 @@ async def file_download(event_or_message, message, fast_download=True):
         return None, None, None, None, None
 
     # Tentukan path download lokal
-    download_dir = "vcbot/downloads/"
+    download_dir = "vcbot/download/"
     if not os.path.isdir(download_dir):
         os.makedirs(download_dir)
 
