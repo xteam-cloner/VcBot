@@ -354,7 +354,6 @@ async def download_yt_file(ytlink):
         os.makedirs("vcbot/download")
         
     ytd_opts = {
-        # 💡 Perbaikan: Mengubah format menjadi 'best' agar yt-dlp memilih format yang paling kompatibel
         "format": "best", 
         "outtmpl": "vcbot/download/%(id)s.%(ext)s", 
         "prefer_ffmpeg": True,
@@ -387,8 +386,20 @@ async def download_yt_file(ytlink):
             title = info.get("title", "Unknown")
             duration_sec = info.get("duration")
             duration = time_formatter(duration_sec * 1000) if duration_sec else "♾"
-            thumb = f"https://i.ytimg.com/vi/{info['id']}/hqdefault.jpg"
             link = info['webpage_url']
+
+            # FIX: Menggunakan jalur file lokal untuk thumbnail
+            thumb_path = None
+            base_name = os.path.splitext(local_path)[0]
+            
+            for ext in ['webp', 'jpg', 'jpeg', 'png']:
+                potential_thumb = f"{base_name}.{ext}"
+                if os.path.exists(potential_thumb):
+                    thumb_path = potential_thumb
+                    break
+            
+            # Jika file lokal ditemukan, gunakan path file; jika tidak, fallback ke URL
+            thumb = thumb_path if thumb_path else f"https://i.ytimg.com/vi/{info['id']}/hqdefault.jpg"
 
             return local_path, thumb, title, link, duration
             
@@ -549,4 +560,4 @@ async def file_download(event_or_message, message, fast_download=True):
         if local_path and os.path.exists(local_path):
              os.remove(local_path)
         return None, None, None, None, None
-                
+        
