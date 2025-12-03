@@ -128,33 +128,50 @@ class Player:
     async def playout_ended_handler(self, call, source, mtype):
         if os.path.exists(source):
             os.remove(source)
+        # Memanggil metode terpisah untuk melanjutkan antrian
         await self.play_from_queue()
 
-        async def play_from_queue(self):
-            chat_id = self._chat
+    # Metode baru untuk menangani logika antrian dan pemutaran
+    async def play_from_queue(self):
+        chat_id = self._chat
+        
+        try:
             if chat_id in VIDEO_ON:
                 await self.group_call.stop_video()
                 VIDEO_ON.pop(chat_id)
-                try:
-                    song_source, title, link, thumb, from_user, pos, dur = await get_from_queue(
-                        chat_id
-                    )
             
-            # 🛑 PERBAIKAN AKHIR: VALIDASI SUMBER LAGU DARI ANTRIAN
-            # Pastikan song_source bukan None, atau hanya string query mentah.
-            if not song_source or not (os.path.exists(song_source) or is_url_ok(song_source)):
+            # Ambil item berikutnya dari antrian
+            try:
+                song_source, title, link, thumb, from_user, pos, dur = await get_from_queue(
+                    chat_id
+                )
+            except (IndexError, KeyError):
+                # Antrian kosong, tinggalkan VC
+                await self.group_call.stop()
+                del CLIENTS[self._chat]
+                await vcClient.send_message(
+                    self._current_chat,
+                    f"• Successfully Left Vc : <code>{chat_id}</code> •",
+                    parse_mode="html",
+                )
+                return
+            
+            # 🛑 VALIDASI SUMBER LAGU DARI ANTRIAN
+            if not song_source or (
+                not os.path.exists(song_source) and not is_url_ok(song_source)
+            ):
                  LOGS.error(f"Invalid song source detected in queue: {song_source}. Skipping.")
                  await vcClient.send_message(
                      self._current_chat,
                      "⚠️ **ERROR MEDIA:** File di antrian tidak valid. Melanjutkan ke antrian berikutnya.",
                      parse_mode="html",
                  )
+                 # Hapus item yang invalid dan lanjutkan
                  VC_QUEUE[chat_id].pop(pos)
                  if not VC_QUEUE[chat_id]:
                       VC_QUEUE.pop(chat_id)
                  await self.play_from_queue() 
                  return
-            # -----------------------------------------------
 
             if song_source and "youtube.com" in song_source:
                  local_path, thumb, title, link, dur = await download_yt_file(song_source)
@@ -167,6 +184,7 @@ class Player:
                       return
                  song_source = local_path
             
+            # Mulai pemutaran audio
             try:
                 await self.group_call.start_audio(song_source) 
             except ParticipantJoinMissingError:
@@ -185,6 +203,7 @@ class Player:
                  await self.play_from_queue()
                  return
             
+            # Kirim pesan Now Playing
             if MSGID_CACHE.get(chat_id):
                 await MSGID_CACHE[chat_id].delete()
                 del MSGID_CACHE[chat_id]
@@ -193,7 +212,7 @@ class Player:
             try:
                 xx = await vcClient.send_message(
                     self._current_chat,
-                    f"<strong>🎧 Now playing #{pos}: <a href={link}>{title}</a>\n⏰ Duration:</strong> <code>{dur}</code>\n👤 <strong>Requested by:</strong> {from_user}",
+                    text,
                     file=thumb,
                     link_preview=False,
                     parse_mode="html",
@@ -205,25 +224,20 @@ class Player:
                 )
             MSGID_CACHE.update({chat_id: xx})
             
+            # Hapus item dari antrian setelah berhasil diputar
             VC_QUEUE[chat_id].pop(pos)
             if not VC_QUEUE[chat_id]:
                 VC_QUEUE.pop(chat_id)
 
-        except (IndexError, KeyError):
-            await self.group_call.stop()
-            del CLIENTS[self._chat]
-            await vcClient.send_message(
-                self._current_chat,
-                f"• Successfully Left Vc : <code>{chat_id}</code> •",
-                parse_mode="html",
-            )
         except Exception as er:
+            # Catch semua error lainnya selama proses dequeue/play
             LOGS.exception(er)
             await vcClient.send_message(
                 self._current_chat,
                 f"<strong>ERROR:</strong> <code>{format_exc()}</code>",
                 parse_mode="html",
             )
+
 
     async def vc_joiner(self):
         chat_id = self._chat
