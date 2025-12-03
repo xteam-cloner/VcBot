@@ -371,6 +371,10 @@ async def download_yt_file(ytlink):
     
     try:
         with YoutubeDL(ytd_opts) as ydl:
+            # 💡 Perbaikan: Pastikan ytlink adalah ID atau URL yang dapat diunduh
+            if "youtube.com" not in ytlink and "youtu.be" not in ytlink:
+                 ytlink = f"https://www.youtube.com/watch?v={ytlink}"
+
             info = ydl.extract_info(ytlink, download=True)
             
             if 'entries' in info:
@@ -395,22 +399,47 @@ async def download_yt_file(ytlink):
         LOGS.error(f"Failed to download YT file: {e}")
         return None, None, None, None, None
 
+# Fungsi Pembantu untuk Membersihkan URL/Query
+def clean_youtube_query(query):
+    # Pola Regex untuk mengekstrak ID Video dari berbagai format YouTube/youtu.be
+    match = re.search(r'(?:youtu\.be\/|v=|embed\/|watch\?v=)([^&?]+)', query)
+    if match:
+        return match.group(1) # Mengembalikan ID video murni
+    
+    # Jika bukan URL, anggap sebagai kata kunci
+    if not query.startswith("http"):
+        return query
+        
+    # Jika URL, tapi tidak dikenali regex, hapus parameter '?...'
+    return query.split('?')[0]
+
 async def download(query):
-    if query.startswith("https://") and "youtube" not in query.lower():
+    # 💡 PERBAIKAN: Bersihkan URL/Query sebelum digunakan untuk pencarian
+    cleaned_query = clean_youtube_query(query)
+
+    if cleaned_query.startswith("https://") and "youtube" not in cleaned_query.lower():
         thumb, duration = None, "Unknown"
-        title = link = query
-        dl = query 
+        title = link = cleaned_query
+        dl = cleaned_query 
         return dl, thumb, title, link, duration
     else:
         if not VideosSearch:
              return None, None, None, None, None
-        search = VideosSearch(query, limit=1).result()
+        
+        # Jika cleaned_query adalah ID murni, kita bisa langsung unduh daripada mencari ulang
+        if len(cleaned_query) <= 11 and not cleaned_query.startswith("http"):
+            search_term = cleaned_query
+        else:
+            search_term = cleaned_query
+            
+        search = VideosSearch(search_term, limit=1).result()
         if not search["result"]:
             return None, None, None, None, None
             
         data = search["result"][0]
         link = data["link"]
         
+        # Gunakan link YouTube yang valid dari hasil pencarian untuk diunduh
         local_path, thumb, title, link, duration = await download_yt_file(link)
         
         return local_path, thumb, title, link, duration
@@ -439,7 +468,10 @@ async def dl_playlist(chat, from_user, link):
         try:
             if not VideosSearch:
                  continue
-            search = VideosSearch(url, limit=1).result()
+            # Membersihkan URL sebelum pencarian (untuk mendapatkan info durasi/thumb)
+            cleaned_url = clean_youtube_query(url)
+            
+            search = VideosSearch(cleaned_url, limit=1).result()
             if not search["result"]:
                  continue
             vid = search["result"][0]
@@ -460,13 +492,16 @@ async def vid_download(query):
     if not VideosSearch:
         LOGS.error("VideosSearch library not available.")
         return None, None, None, None, None
+    
+    # 💡 PERBAIKAN: Bersihkan URL/Query sebelum digunakan untuk pencarian
+    cleaned_query = clean_youtube_query(query)
         
     try:
         # 1. Search for the video
-        search = VideosSearch(query, limit=1).result()
+        search = VideosSearch(cleaned_query, limit=1).result()
         
         if not search or not search.get("result"):
-            LOGS.warning(f"No results found for query: {query}")
+            LOGS.warning(f"No results found for query: {cleaned_query}")
             return None, None, None, None, None
             
         data = search["result"][0]
@@ -482,11 +517,11 @@ async def vid_download(query):
         return video, thumb, title, link, duration
         
     except IndexError:
-        LOGS.error(f"IndexError during search result processing for query: {query}")
+        LOGS.error(f"IndexError during search result processing for query: {cleaned_query}")
         return None, None, None, None, None
         
     except Exception as e:
-        LOGS.exception(f"Unexpected error in vid_download for query: {query}")
+        LOGS.exception(f"Unexpected error in vid_download for query: {cleaned_query}")
         return None, None, None, None, None
         
 async def file_download(event_or_message, message, fast_download=True):
@@ -530,4 +565,3 @@ async def file_download(event_or_message, message, fast_download=True):
         if local_path and os.path.exists(local_path):
              os.remove(local_path)
         return None, None, None, None, None
-            
