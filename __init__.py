@@ -428,13 +428,35 @@ async def dl_playlist(chat, from_user, link):
 
 async def vid_download(query):
     if not VideosSearch:
+        LOGS.error("VideosSearch library not available.")
         return None, None, None, None, None
-    search = VideosSearch(query, limit=1).result()
-    data = search["result"][0]
-    link = data["link"]
-    video, thumb, title, link, duration = await download_yt_file(link)
-    return video, thumb, title, link, duration
-
+        
+    try:
+        search = VideosSearch(query, limit=1).result()
+        
+        if not search or not search.get("result"):
+            LOGS.warning(f"No results found for query: {query}")
+            return None, None, None, None, None
+            
+        data = search["result"][0]
+        link = data["link"]
+        
+        video, thumb, title, link, duration = await download_yt_file(link)
+        
+        if not video:
+            LOGS.error(f"Failed to download YouTube file for link: {link}")
+            return None, None, None, None, None
+            
+        return video, thumb, title, link, duration
+        
+    except IndexError:
+        LOGS.error(f"IndexError during search result processing for query: {query}")
+        return None, None, None, None, None
+        
+    except Exception as e:
+        LOGS.exception(f"Unexpected error in vid_download for query: {query}")
+        return None, None, None, None, None
+        
 async def file_download(event_or_message, message, fast_download=True):
     if not message.media:
         return None, None, None, None, None
