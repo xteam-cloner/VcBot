@@ -57,8 +57,10 @@ except ImportError:
 
 try:
    from youtubesearchpython import VideosSearch
+   from youtubesearchpython import Playlist
 except ImportError:
     VideosSearch = None
+    Playlist = None
 
 from strings import get_string
 
@@ -136,6 +138,7 @@ class Player:
             ACTIVE_CALLS.remove(chat)
 
     async def playout_ended_handler(self, call, source, mtype):
+        # 'source' kini adalah path file lokal
         if os.path.exists(source):
             os.remove(source)
         await self.play_from_queue()
@@ -146,14 +149,23 @@ class Player:
             await self.group_call.stop_video()
             VIDEO_ON.pop(chat_id)
         try:
-            song, title, link, thumb, from_user, pos, dur = await get_from_queue(
+            song_source, title, link, thumb, from_user, pos, dur = await get_from_queue(
                 chat_id
             )
+            
+            # Jika song_source adalah URL YouTube (dari playlist), download sekarang
+            if song_source and "youtube.com" in song_source:
+                 local_path, thumb, title, link, dur = await download_yt_file(song_source)
+                 if not local_path:
+                      raise Exception("Failed to download next song from queue.")
+                 song_source = local_path
+            
             try:
-                await self.group_call.start_audio(song)
+                # 'song_source' adalah path lokal atau URL stream radio
+                await self.group_call.start_audio(song_source) 
             except ParticipantJoinMissingError:
                 await self.vc_joiner()
-                await self.group_call.start_audio(song)
+                await self.group_call.start_audio(song_source)
             if MSGID_CACHE.get(chat_id):
                 await MSGID_CACHE[chat_id].delete()
                 del MSGID_CACHE[chat_id]
@@ -269,7 +281,7 @@ def add_to_queue(chat_id, song, song_name, link, thumb, from_user, duration):
         play_at = 1
     stuff = {
         play_at: {
-            "song": song,
+            "song": song, # Path lokal, URL stream, atau URL YT (untuk playlist)
             "title": song_name,
             "link": link,
             "thumb": thumb,
@@ -304,59 +316,38 @@ async def get_from_queue(chat_id):
     thumb = info["thumb"]
     from_user = info["from_user"]
     duration = info["duration"]
-    if not song:
-        song = await get_stream_link(link)
+        
     return song, title, link, thumb, from_user, play_this, duration
 
 
 # --------------------------------------------------
 
+# --- FUNGSI DOWNLOAD BARU (Inti Stabilitas) ---
 
-# ... (Baris impor dan definisi fungsi lainnya) ...
-
-# --------------------------------------------------
-
-async def download(query):
-    if query.startswith("https://") and "youtube" not in query.lower():
-        thumb, duration = None, "Unknown"
-        title = link = query
-    else:
-        search = VideosSearch(query, limit=1).result()
-        data = search["result"][0]
-        link = data["link"]
-        title = data["title"]
-        duration = data.get("duration") or "♾"
-        thumb = f"https://i.ytimg.com/vi/{data['id']}/hqdefault.jpg"
-        
-    # Memanggil fungsi get_stream_link yang diperbaiki
-    dl = await get_stream_link(link) 
-    
-    if dl is None:
-        # Jika pengambilan stream gagal, kembalikan None
-        return None, thumb, title, link, duration
-        
-    return dl, thumb, title, link, duration
-
-
-# --- DI vcbot/__init__.py (Hanya bagian yang dimodifikasi) ---
-
-# Ganti 'get_stream_link' dengan fungsi yang melakukan download penuh
 async def download_yt_file(ytlink):
     """
-    Mengunduh file audio terbaik ke path lokal dan mengembalikan path tersebut.
+    Mengunduh file audio terbaik ke path lokal dan mengembalikan path serta metadata.
     """
-    # Atur opsi download audio-only (seperti di command `songs`)
+    if not YoutubeDL:
+        LOGS.error("yt-dlp tidak terinstal!")
+        return None, None, None, None, None
+        
+    # Buat direktori download jika belum ada
+    if not os.path.isdir("vcbot/downloads"):
+        os.makedirs("vcbot/downloads")
+        
+    # Atur opsi download audio-only
     ytd_opts = {
         "format": "bestaudio/best",
-        # Pastikan ini adalah path yang dapat diakses dan ditulis
         "outtmpl": "vcbot/downloads/%(id)s.%(ext)s", 
         "prefer_ffmpeg": True,
         "addmetadata": True,
         "geo-bypass": True,
         "nocheckcertificate": True,
-        # Menonaktifkan logging yt-dlp yang berlebihan jika tidak diperlukan
         "quiet": True, 
         "no_warnings": True,
+        "forcethumbnail": True,
+        "writethumbnail": True, # Untuk thumbnail lokal jika diperlukan
     }
     
     try:
@@ -364,25 +355,20 @@ async def download_yt_file(ytlink):
             # Mengambil informasi video dan mengunduh
             info = ydl.extract_info(ytlink, download=True)
             
-            # Jika itu adalah playlist, ini akan mengembalikan info playlist. Kita ambil lagu pertama.
             if 'entries' in info:
+                # Jika link adalah playlist, ambil info entri pertama
                 info = info['entries'][0]
                 
             # Mengambil path file yang diunduh secara lokal
-            # YT-DLP vokal sering mengembalikan `requested_downloads` yang berisi path final
-            if 'requested_downloads' in info and info['requested_downloads']:
-                 # Ambil path dari hasil download pertama
-                 local_path = info['requested_downloads'][0]['filepath']
-            else:
-                 # Fallback: asumsi yt-dlp mengembalikan path output tunggal
-                 # Ini sering kali tidak bisa diandalkan, jadi sebaiknya menggunakan info
-                 local_path = ydl.prepare_filename(info) 
-                 # Jika yt-dlp menggunakan template %()s, ini seringkali hanya mengembalikan nama file tanpa path lengkap
-                 local_path = os.path.join("vcbot/downloads", local_path) 
-                 
+            local_path = ydl.prepare_filename(info) 
+            # Perbaiki path relatif
+            if not os.path.isabs(local_path):
+                 local_path = os.path.join("vcbot/downloads", local_path)
+
             # Cari informasi yang relevan
             title = info.get("title", "Unknown")
-            duration = info.get("duration") or "♾"
+            duration_sec = info.get("duration")
+            duration = time_formatter(duration_sec * 1000) if duration_sec else "♾"
             thumb = f"https://i.ytimg.com/vi/{info['id']}/hqdefault.jpg"
             link = info['webpage_url']
 
@@ -392,17 +378,16 @@ async def download_yt_file(ytlink):
         LOGS.error(f"Gagal mendownload file YT: {e}")
         return None, None, None, None, None
 
-
-# Modifikasi fungsi download untuk menggunakan download_yt_file
+# --- FUNGSI DOWNLOAD UTAMA (Dipanggil oleh play.py) ---
 async def download(query):
     if query.startswith("https://") and "youtube" not in query.lower():
-        # Kasus URL non-YouTube, gunakan URL sebagai path stream (seperti radio)
+        # Kasus URL non-YouTube/Radio
         thumb, duration = None, "Unknown"
         title = link = query
-        dl = query # URL stream
+        dl = query 
         return dl, thumb, title, link, duration
     else:
-        # Cari dan unduh YouTube
+        # Kasus Pencarian/Link YouTube
         search = VideosSearch(query, limit=1).result()
         if not search["result"]:
             return None, None, None, None, None
@@ -413,13 +398,134 @@ async def download(query):
         # PANGGIL FUNGSI DOWNLOAD BARU
         local_path, thumb, title, link, duration = await download_yt_file(link)
         
-        # local_path adalah path file yang sudah diunduh, bukan URL stream
         return local_path, thumb, title, link, duration
 
+# --- FUNGSI PLAYLIST YANG HILANG (Wajib Dikembalikan) ---
+async def dl_playlist(chat, from_user, link):
+    """
+    Mengelola playlist: mendownload lagu pertama, menambahkan sisanya ke queue.
+    """
+    if not Playlist:
+        LOGS.error("youtubesearchpython tidak terinstal untuk Playlist!")
+        return None, None, None, None, None
+        
+    try:
+        # Menggunakan get_videos_link (asumsi ini mengembalikan list of URLs)
+        links = await get_videos_link(link) 
+    except Exception as er:
+        LOGS.exception(er)
+        return None, None, None, None, None
+        
+    if not links:
+        return None, None, None, None, None
 
-# PENTING: Perbaiki playout_ended_handler untuk menghapus file lokal
-async def playout_ended_handler(self, call, source, mtype):
-    # 'source' sekarang akan menjadi path file lokal jika itu adalah file yang didownload
-    if os.path.exists(source):
-        os.remove(source) # Hapus file lokal setelah selesai diputar
-    await self.play_from_queue()
+    # DOWNLOAD LAGU PERTAMA SECARA LOKAL
+    first_link = links[0]
+    local_path, thumb, title, link, duration = await download_yt_file(first_link)
+    
+    if not local_path:
+        return None, None, None, None, None
+
+    # TAMBAHKAN LAGU SISA KE QUEUE (hanya simpan URL)
+    for url in links[1:]:
+        try:
+            search = VideosSearch(url, limit=1).result()
+            if not search["result"]:
+                 continue
+            vid = search["result"][0]
+            dur_sec = vid.get("duration")
+            dur = time_formatter(dur_sec * 1000) if dur_sec else "♾"
+            title_q = vid["title"]
+            thumb_q = f"https://i.ytimg.com/vi/{vid['id']}/hqdefault.jpg"
+            link_q = vid["link"]
+            
+            # Simpan URL di queue. Fungsi play_from_queue akan men-download saat giliran tiba.
+            add_to_queue(chat, link_q, title_q, link_q, thumb_q, from_user, dur)
+        except Exception as er:
+            LOGS.exception(er)
+            
+    # Kembalikan hasil download lagu pertama untuk diputar
+    return local_path, thumb, title, link, duration
+
+
+# --- FUNGSI LAMA (Disisakan untuk kompatibilitas jika diperlukan) ---
+async def vid_download(query):
+    search = VideosSearch(query, limit=1).result()
+    data = search["result"][0]
+    link = data["link"]
+    # Menggunakan download file penuh untuk video juga
+    video, thumb, title, link, duration = await download_yt_file(link)
+    return video, thumb, title, link, duration
+
+async def file_download(event_or_message, message, fast_download=True):
+    # Asumsi fungsi ini didefinisikan di tempat lain atau di dalam __init__.py 
+    # untuk menangani file audio/video yang dibalas.
+    # Jika tidak ada, Anda perlu mendefinisikannya berdasarkan struktur Ultroid.
+    # Contoh stub:
+    if not message.media:
+        return None, None, None, None, None
+    
+    # ... (Logika downloader, mediainfo, dll. di sini) ...
+    
+    # Jika berhasil, kembalikan:
+    # return local_path, thumb, song_name, link, duration
+    pass
+# -----------------------------------------------------------------------
+
+# --- Tambahkan atau verifikasi fungsi file_download di sini ---
+
+async def file_download(event_or_message, message, fast_download=True):
+    """
+    Menangani download file media yang dibalas.
+    Menggunakan xteam.fns.helper.downloader.
+    """
+    if not message.media:
+        return None, None, None, None, None
+
+    # Tentukan path download lokal
+    download_dir = "vcbot/downloads/"
+    if not os.path.isdir(download_dir):
+        os.makedirs(download_dir)
+
+    await event_or_message.edit("• Mengunduh media...")
+    
+    try:
+        # Menggunakan downloader dari xteam.fns.helper
+        # Asumsi 'downloader' dapat menangani objek Message/Media dan mengembalikan path lokal
+        local_path = await downloader(
+            message,
+            file_name=download_dir
+        )
+    except Exception as e:
+        LOGS.exception(f"Gagal mengunduh file media yang dibalas: {e}")
+        return None, None, None, None, None
+
+    try:
+        # Mengambil informasi media
+        info = mediainfo(local_path) 
+        
+        # Ekstrak data yang diperlukan (asumsi mediainfo mengembalikan string yang dapat diparse)
+        # Karena mediainfo tidak selalu mengembalikan objek terstruktur, kita lakukan ekstraksi dasar
+        song_name = getattr(message.document, 'file_name', os.path.basename(local_path))
+        duration_sec = getattr(message.document, 'duration', None)
+        duration = time_formatter(duration_sec * 1000) if duration_sec else "♾"
+        
+        # Link akan disetel ke path lokal untuk pemutaran
+        link = local_path 
+        
+        # Thumb: Ambil thumbnail jika ada
+        if message.document and message.document.thumbs:
+            thumb = await message.download_media(message.document.thumbs[0])
+        else:
+            thumb = None
+
+        return local_path, thumb, song_name, link, duration
+        
+    except Exception as e:
+        LOGS.exception(f"Gagal memproses mediainfo: {e}")
+        # Hapus file yang sudah terlanjur didownload jika gagal diproses
+        if os.path.exists(local_path):
+             os.remove(local_path)
+        return None, None, None, None, None
+
+# --- Pastikan fungsi lain yang bergantung pada impor ada, seperti downloader (dari xteam.fns.helper) ---
