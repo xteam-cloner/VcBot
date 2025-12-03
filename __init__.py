@@ -338,102 +338,88 @@ async def download(query):
     return dl, thumb, title, link, duration
 
 
-async def get_stream_link(ytlink):
+# --- DI vcbot/__init__.py (Hanya bagian yang dimodifikasi) ---
+
+# Ganti 'get_stream_link' dengan fungsi yang melakukan download penuh
+async def download_yt_file(ytlink):
     """
-    Mengambil URL stream audio-only terbaik yang stabil dari YouTube.
+    Mengunduh file audio terbaik ke path lokal dan mengembalikan path tersebut.
     """
-    # Menggunakan opsi format yt-dlp: 'bestaudio/best' untuk memastikan hanya audio yang dipilih.
-    # Ini menghilangkan risiko mendapatkan stream gabungan video/audio yang tidak stabil (HLS/DASH).
+    # Atur opsi download audio-only (seperti di command `songs`)
+    ytd_opts = {
+        "format": "bestaudio/best",
+        # Pastikan ini adalah path yang dapat diakses dan ditulis
+        "outtmpl": "vcbot/downloads/%(id)s.%(ext)s", 
+        "prefer_ffmpeg": True,
+        "addmetadata": True,
+        "geo-bypass": True,
+        "nocheckcertificate": True,
+        # Menonaktifkan logging yt-dlp yang berlebihan jika tidak diperlukan
+        "quiet": True, 
+        "no_warnings": True,
+    }
     
-    # yt-dlp -g -f "bestaudio/best" akan mencetak URL stream langsung
-    stream = await bash(f'yt-dlp -g -f "bestaudio/best" {ytlink}')
-    
-    # stream[0] akan berisi URL audio langsung.
-    if stream and stream[0].startswith("http"):
-        # Mengembalikan URL yang bersih (tanpa spasi di akhir)
-        return stream[0].strip()
-    
-    LOGS.error(f"yt-dlp gagal mendapatkan stream link untuk {ytlink}. Output: {stream}")
-    return None
-
-# ... (Fungsi dl_playlist, vid_download, file_download, dan bagian bawah lainnya) ...
-
-
-async def vid_download(query):
-    search = VideosSearch(query, limit=1).result()
-    data = search["result"][0]
-    link = data["link"]
-    video = await get_stream_link(link)
-    title = data["title"]
-    thumb = f"https://i.ytimg.com/vi/{data['id']}/hqdefault.jpg"
-    duration = data.get("duration") or "♾"
-    return video, thumb, title, link, duration
-
-
-async def dl_playlist(chat, from_user, link):
-    # untill issue get fix
-    # https://github.com/alexmercerind/youtube-search-python/issues/107
-    """
-    vids = Playlist.getVideos(link)
     try:
-        vid1 = vids["videos"][0]
-        duration = vid1["duration"] or "♾"
-        title = vid1["title"]
-        song = await get_stream_link(vid1['link'])
-        thumb = f"https://i.ytimg.com/vi/{vid1['id']}/hqdefault.jpg"
-        return song[0], thumb, title, vid1["link"], duration
-    finally:
-        vids = vids["videos"][1:]
-        for z in vids:
-            duration = z["duration"] or "♾"
-            title = z["title"]
-            thumb = f"https://i.ytimg.com/vi/{z['id']}/hqdefault.jpg"
-            add_to_queue(chat, None, title, z["link"], thumb, from_user, duration)
-    """
-    links = await get_videos_link(link)
-    try:
-        search = VideosSearch(links[0], limit=1).result()
-        vid1 = search["result"][0]
-        duration = vid1.get("duration") or "♾"
-        title = vid1["title"]
-        song = await get_stream_link(vid1["link"])
-        thumb = f"https://i.ytimg.com/vi/{vid1['id']}/hqdefault.jpg"
-        return song, thumb, title, vid1["link"], duration
-    finally:
-        for z in links[1:]:
-            try:
-                search = VideosSearch(z, limit=1).result()
-                vid = search["result"][0]
-                duration = vid.get("duration") or "♾"
-                title = vid["title"]
-                thumb = f"https://i.ytimg.com/vi/{vid['id']}/hqdefault.jpg"
-                add_to_queue(chat, None, title, vid["link"], thumb, from_user, duration)
-            except Exception as er:
-                LOGS.exception(er)
+        with YoutubeDL(ytd_opts) as ydl:
+            # Mengambil informasi video dan mengunduh
+            info = ydl.extract_info(ytlink, download=True)
+            
+            # Jika itu adalah playlist, ini akan mengembalikan info playlist. Kita ambil lagu pertama.
+            if 'entries' in info:
+                info = info['entries'][0]
+                
+            # Mengambil path file yang diunduh secara lokal
+            # YT-DLP vokal sering mengembalikan `requested_downloads` yang berisi path final
+            if 'requested_downloads' in info and info['requested_downloads']:
+                 # Ambil path dari hasil download pertama
+                 local_path = info['requested_downloads'][0]['filepath']
+            else:
+                 # Fallback: asumsi yt-dlp mengembalikan path output tunggal
+                 # Ini sering kali tidak bisa diandalkan, jadi sebaiknya menggunakan info
+                 local_path = ydl.prepare_filename(info) 
+                 # Jika yt-dlp menggunakan template %()s, ini seringkali hanya mengembalikan nama file tanpa path lengkap
+                 local_path = os.path.join("vcbot/downloads", local_path) 
+                 
+            # Cari informasi yang relevan
+            title = info.get("title", "Unknown")
+            duration = info.get("duration") or "♾"
+            thumb = f"https://i.ytimg.com/vi/{info['id']}/hqdefault.jpg"
+            link = info['webpage_url']
+
+            return local_path, thumb, title, link, duration
+            
+    except Exception as e:
+        LOGS.error(f"Gagal mendownload file YT: {e}")
+        return None, None, None, None, None
 
 
-async def file_download(event, reply, fast_download=True):
-    thumb = "https://telegra.ph/file/22bb2349da20c7524e4db.mp4"
-    title = reply.file.title or reply.file.name or f"{str(time())}.mp4"
-    file = reply.file.name or f"{str(time())}.mp4"
-    if fast_download:
-        dl = await downloader(
-            f"vcbot/downloads/{file}",
-            reply.media.document,
-            event,
-            time(),
-            f"Downloading {title}...",
-        )
-
-        dl = dl.name
+# Modifikasi fungsi download untuk menggunakan download_yt_file
+async def download(query):
+    if query.startswith("https://") and "youtube" not in query.lower():
+        # Kasus URL non-YouTube, gunakan URL sebagai path stream (seperti radio)
+        thumb, duration = None, "Unknown"
+        title = link = query
+        dl = query # URL stream
+        return dl, thumb, title, link, duration
     else:
-        dl = await reply.download_media()
-    duration = (
-        time_formatter(reply.file.duration * 1000) if reply.file.duration else "🤷‍♂️"
-    )
-    if reply.document.thumbs:
-        thumb = await reply.download_media("vcbot/downloads/", thumb=-1)
-    return dl, thumb, title, reply.message_link, duration
+        # Cari dan unduh YouTube
+        search = VideosSearch(query, limit=1).result()
+        if not search["result"]:
+            return None, None, None, None, None
+            
+        data = search["result"][0]
+        link = data["link"]
+        
+        # PANGGIL FUNGSI DOWNLOAD BARU
+        local_path, thumb, title, link, duration = await download_yt_file(link)
+        
+        # local_path adalah path file yang sudah diunduh, bukan URL stream
+        return local_path, thumb, title, link, duration
 
 
-# --------------------------------------------------
+# PENTING: Perbaiki playout_ended_handler untuk menghapus file lokal
+async def playout_ended_handler(self, call, source, mtype):
+    # 'source' sekarang akan menjadi path file lokal jika itu adalah file yang didownload
+    if os.path.exists(source):
+        os.remove(source) # Hapus file lokal setelah selesai diputar
+    await self.play_from_queue()
