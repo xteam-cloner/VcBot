@@ -119,11 +119,35 @@ class Player:
 
     async def on_network_changed(self, call, is_connected):
         chat = self._chat
+        
         if is_connected:
             if chat not in ACTIVE_CALLS:
                 ACTIVE_CALLS.append(chat)
         elif chat in ACTIVE_CALLS:
+            
             ACTIVE_CALLS.remove(chat)
+            LOGS.warning(f"Koneksi VC terputus di {chat}. Mencoba bergabung kembali.")
+            
+            try:
+                
+                await self.group_call.stop() 
+                
+                if chat in CLIENTS:
+                     del CLIENTS[chat]
+                
+                await asyncio.sleep(5) 
+                
+                done, err = await self.startCall() 
+                
+                if done:
+                    LOGS.info(f"Auto-rejoin berhasil di {chat}.")
+                    
+                    await self.play_from_queue()
+                else:
+                    LOGS.error(f"Auto-rejoin GAGAL di {chat}: {err}")
+                    
+            except Exception as e:
+                LOGS.exception(f"Error saat auto-rejoin di {chat}: {e}")
 
     async def playout_ended_handler(self, call, source, mtype):
         if os.path.exists(source):
@@ -388,7 +412,7 @@ async def download_yt_file(ytlink):
             duration = time_formatter(duration_sec * 1000) if duration_sec else "♾"
             link = info['webpage_url']
 
-            # FIX: Menggunakan jalur file lokal untuk thumbnail
+            
             thumb_path = None
             base_name = os.path.splitext(local_path)[0]
             
@@ -398,7 +422,6 @@ async def download_yt_file(ytlink):
                     thumb_path = potential_thumb
                     break
             
-            # Jika file lokal ditemukan, gunakan path file; jika tidak, fallback ke URL
             thumb = thumb_path if thumb_path else f"https://i.ytimg.com/vi/{info['id']}/hqdefault.jpg"
 
             return local_path, thumb, title, link, duration
@@ -428,6 +451,7 @@ async def download(query):
     else:
         if not VideosSearch:
              return None, None, None, None, None
+        
         
         if len(cleaned_query) <= 11 and not cleaned_query.startswith("http"):
             link = cleaned_query
