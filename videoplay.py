@@ -1,4 +1,4 @@
-import re, asyncio, os # Tambahkan os jika belum ada
+import re, asyncio, os 
 from telethon.errors.rpcerrorlist import ChatSendMediaForbiddenError
 from . import vc_asst, Player, get_string, inline_mention, is_url_ok, mediainfo, vid_download, file_download,LOGS
 
@@ -31,17 +31,21 @@ async def video_c(event):
         return await xx.eor(get_string("vcbot_15"), time=5)
     await xx.eor(get_string("vcbot_20"))
     
-    # --- PROSES MEDIA ---
     if reply and reply.media and mediainfo(reply.media).startswith("video"):
         song, thumb, title, link, duration = await file_download(xx, reply)
     else:
         is_link = is_url_ok(song)
         if is_link is False:
             return await xx.eor(f"`{song}`\n\nNot a playable link.🥱")
+            
         if is_link is None or re.search("youtube", song) or re.search("youtu", song):
-            song, thumb, title, link, duration = await vid_download(song) 
+            try:
+                song, thumb, title, link, duration = await vid_download(song)
+            except ValueError as e:
+                return await xx.eor(f"❌ **Gagal mencari:** {e}", time=8)
+            except Exception as e:
+                return await xx.eor(f"❌ **Error unduhan:** {e}", time=8)
         else:
-            # URL Langsung Non-YouTube/m3u8
             song, thumb, title, link, duration = (
                 song,
                 "https://telegra.ph/file/22bb2349da20c7524e4db.mp4",
@@ -50,11 +54,6 @@ async def video_c(event):
                 "♾",
             )
             
-    # 🛑 PERBAIKAN UTAMA: Validasi Sumber Media
-    # Cek apakah song adalah None atau tidak valid.
-    # Pemeriksaan ini MENCEGAH crash di pytgcalls.
-    
-    # Asumsikan path/URL yang valid harus dimulai dengan path relatif/absolut atau protokol http/s
     is_valid_source = (
         song and 
         (re.match(r'^https?://|^ftps?://|^\.', song) or os.path.exists(song) or 'telegra.ph' in song)
@@ -62,7 +61,7 @@ async def video_c(event):
 
     if not song or not is_valid_source:
         return await xx.eor(
-            "❌ **Gagal:** Tidak dapat menemukan media atau pengunduhan gagal. Coba kata kunci atau link lain.",
+            "❌ **Gagal:** Tidak dapat menemukan media atau sumber tidak valid. Coba kata kunci atau link lain.",
             time=8,
         )
 
@@ -83,6 +82,6 @@ async def video_c(event):
         await xx.reply(text, link_preview=False)
         
     await asyncio.sleep(1)
-    await ultSongs.group_call.start_video(song, with_audio=True) # Line 74/81 yang sekarang aman
+    await ultSongs.group_call.start_video(song, with_audio=True)
     await xx.delete()
     
