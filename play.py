@@ -79,7 +79,7 @@ async def play_music_(event):
         try:
             await xx.reply(
                 text,
-                file=thumb,
+                #file=thumb,
                 link_preview=True,
                 parse_mode="html",
             )
