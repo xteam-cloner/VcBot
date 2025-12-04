@@ -79,13 +79,13 @@ async def play_music_(event):
         try:
             await xx.reply(
                 text,
-                #file=thumb,
-                link_preview=True,
+                file=thumb,
+                link_preview=False,
                 parse_mode="html",
             )
             await xx.delete()
         except ChatSendMediaForbiddenError:
-            await xx.eor(text, link_preview=True)
+            await xx.eor(text, link_preview=False)
             
         if thumb and os.path.exists(thumb):
             os.remove(thumb)
