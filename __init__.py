@@ -342,12 +342,10 @@ async def get_stream_link(ytlink):
     return stream[0]
 
 
- async def vid_download(query):
-    search = VideosSearch(query, limit=1).result()
-    
+async def vid_download(query):
+    search = VideosSearch(query, limit=1).result() 
     if not search.get("result") or not search["result"]:
-        raise ValueError(f"YouTube search returned no results for the query: {query}")
-    
+        raise ValueError(f"YouTube search returned no results for the query: {query}") 
     data = search["result"][0]
     link = data["link"]
     video = await get_stream_link(link)
