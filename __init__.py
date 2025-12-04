@@ -1,4 +1,4 @@
-import asyncio
+Import asyncio
 import os
 import re
 import traceback
@@ -69,6 +69,8 @@ class Player:
         self._chat = chat
         self._current_chat = event.chat_id if event else LOG_CHANNEL
         self._video = video
+        
+        # Inisialisasi Klien PyTgCalls
         if CLIENTS.get(chat):
             self.group_call = CLIENTS[chat]
         else:
@@ -112,6 +114,12 @@ class Player:
                 dn, err = await self.make_vc_active()
                 if err:
                     return False, err
+                # Coba join lagi setelah membuat VC baru
+                try:
+                    await self.group_call.join(self._chat)
+                except Exception as e:
+                    LOGS.exception(e)
+                    return False, e
             except Exception as e:
                 LOGS.exception(e)
                 return False, e
@@ -129,25 +137,45 @@ class Player:
             LOGS.warning(f"Koneksi VC terputus di {chat}. Mencoba bergabung kembali.")
             
             try:
-                
+                # 1. STOP dan Hapus klien lama
                 await self.group_call.stop() 
-                
                 if chat in CLIENTS:
                      del CLIENTS[chat]
                 
+                # 2. Re-inisialisasi GroupCall di instance Player saat ini (Klien baru)
+                _client = GroupCallFactory(
+                    vcClient, GroupCallFactory.MTPROTO_CLIENT_TYPE.TELETHON,
+                )
+                self.group_call = _client.get_group_call()
+                CLIENTS.update({chat: self.group_call})
+                
+                # 3. Tunggu sebentar dan coba rejoin
                 await asyncio.sleep(5) 
                 
                 done, err = await self.startCall() 
                 
                 if done:
                     LOGS.info(f"Auto-rejoin berhasil di {chat}.")
-                    
+                    # Mulai memutar lagu yang sama
                     await self.play_from_queue()
                 else:
-                    LOGS.error(f"Auto-rejoin GAGAL di {chat}: {err}")
+                    # 4. Tangani kegagalan startCall() dengan LEAVE yang bersih
+                    LOGS.error(f"Auto-rejoin GAGAL di {chat}: {err}. Melakukan leave.")
+                    
+                    if chat in CLIENTS:
+                         del CLIENTS[chat]
+                    
+                    await vcClient.send_message(
+                        self._current_chat,
+                        f"⚠️ **Gagal Rejoin** VC di <code>{chat}</code>: <code>{err}</code>. Bot keluar.",
+                        parse_mode="html",
+                    )
                     
             except Exception as e:
                 LOGS.exception(f"Error saat auto-rejoin di {chat}: {e}")
+                # Tambahkan cleanup jika terjadi error tak terduga
+                if chat in CLIENTS:
+                     del CLIENTS[chat]
 
     async def playout_ended_handler(self, call, source, mtype):
         if os.path.exists(source):
@@ -163,24 +191,29 @@ class Player:
                 VIDEO_ON.pop(chat_id)
             
             try:
-                # Perbaikan KeyError: Memastikan kunci antrian ada sebelum diakses
+                # Memastikan kunci antrian ada sebelum diakses
                 if not VC_QUEUE.get(chat_id):
-                    raise KeyError
+                    raise KeyError # Lanjut ke blok except (Antrian Kosong)
                     
                 song_source, title, link, thumb, from_user, pos, dur = await get_from_queue(
                     chat_id
                 )
             except (IndexError, KeyError):
-                # Penanganan antrian kosong
-                await self.group_call.stop()
+                # Penanganan antrian kosong atau kegagalan get_from_queue -> Bot keluar (Leave)
+                try:
+                    await self.group_call.stop()
+                except:
+                    pass
                 
-                # Perbaikan KeyError: Memastikan kunci klien ada sebelum dihapus
                 if self._chat in CLIENTS:
                     del CLIENTS[self._chat]
                 
+                if self._chat in ACTIVE_CALLS:
+                    ACTIVE_CALLS.remove(self._chat)
+                    
                 await vcClient.send_message(
                     self._current_chat,
-                    f"• Successfully Left Vc : <code>{chat_id}</code> •",
+                    f"• **Antrian Kosong.** Bot keluar dari VC: <code>{chat_id}</code> •",
                     parse_mode="html",
                 )
                 return
@@ -194,19 +227,25 @@ class Player:
                      "⚠️ **ERROR MEDIA:** File di antrian tidak valid. Melanjutkan ke antrian berikutnya.",
                      parse_mode="html",
                  )
-                 VC_QUEUE[chat_id].pop(pos)
-                 if not VC_QUEUE[chat_id]:
-                      VC_QUEUE.pop(chat_id)
+                 try:
+                    VC_QUEUE[chat_id].pop(pos)
+                    if not VC_QUEUE[chat_id]:
+                         VC_QUEUE.pop(chat_id)
+                 except:
+                    pass
                  await self.play_from_queue() 
                  return
 
-            if song_source and "youtube.com" in song_source:
+            if song_source and ("youtube.com" in song_source or "youtu.be" in song_source):
                  local_path, thumb, title, link, dur = await download_yt_file(song_source)
                  if not local_path:
                       LOGS.error(f"Failed to download next song from queue: {song_source}")
-                      VC_QUEUE[chat_id].pop(pos)
-                      if not VC_QUEUE[chat_id]:
-                           VC_QUEUE.pop(chat_id)
+                      try:
+                         VC_QUEUE[chat_id].pop(pos)
+                         if not VC_QUEUE[chat_id]:
+                              VC_QUEUE.pop(chat_id)
+                      except:
+                          pass
                       await self.play_from_queue() 
                       return
                  song_source = local_path
@@ -230,9 +269,12 @@ class Player:
                      "⚠️ **ERROR MEDIA:** File yang akan diputar tidak valid atau rusak. Melanjutkan ke antrian berikutnya.",
                      parse_mode="html",
                  )
-                 VC_QUEUE[chat_id].pop(pos)
-                 if not VC_QUEUE[chat_id]:
-                     VC_QUEUE.pop(chat_id)
+                 try:
+                     VC_QUEUE[chat_id].pop(pos)
+                     if not VC_QUEUE[chat_id]:
+                         VC_QUEUE.pop(chat_id)
+                 except:
+                    pass
                  await self.play_from_queue()
                  return
             
@@ -256,15 +298,19 @@ class Player:
                 )
             MSGID_CACHE.update({chat_id: xx})
             
-            VC_QUEUE[chat_id].pop(pos)
-            if not VC_QUEUE[chat_id]:
-                VC_QUEUE.pop(chat_id)
+            # Hapus lagu dari antrian setelah berhasil diputar
+            try:
+                VC_QUEUE[chat_id].pop(pos)
+                if not VC_QUEUE[chat_id]:
+                    VC_QUEUE.pop(chat_id)
+            except:
+                pass
 
         except Exception as er:
             LOGS.exception(er)
             await vcClient.send_message(
                 self._current_chat,
-                f"<strong>ERROR:</strong> <code>{format_exc()}</code>",
+                f"<strong>ERROR Playback:</strong> <code>{format_exc()}</code>",
                 parse_mode="html",
             )
 
@@ -590,4 +636,4 @@ async def file_download(event_or_message, message, fast_download=True):
         
     except Exception as e:
         LOGS.exception(f"Failed to process mediainfo: {e}")
-     
+        return None, None, None, None, None
