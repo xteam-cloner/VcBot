@@ -341,11 +341,25 @@ async def get_stream_link(ytlink):
     stream = await bash(f'yt-dlp -g -f "best[height<=?720][width<=?1280]" {ytlink}')
     return stream[0]
 
-
 async def vid_download(query):
-    search = VideosSearch(query, limit=1).result() 
+    # Set the query to be used for search. Default is the original query.
+    search_query = query
+    
+    # Check if the query is a YouTube URL and extract the video ID for a more reliable search
+    if "youtu" in query.lower():
+        # Regex to find the video ID from standard (v=...) or short (youtu.be/...) URLs
+        match = re.search(r'(?:v=|youtu\.be\/)([^&?]+)', query)
+        if match:
+            # Use the extracted video ID as the search query
+            search_query = match.group(1)
+
+    # Perform the search using the cleaned query or extracted ID
+    search = VideosSearch(search_query, limit=1).result()
+    
     if not search.get("result") or not search["result"]:
-        raise ValueError(f"YouTube search returned no results for the query: {query}") 
+        # This error is now more likely to be a genuine failure if the ID/query is bad
+        raise ValueError(f"YouTube search returned no results for the query: {query}")
+    
     data = search["result"][0]
     link = data["link"]
     video = await get_stream_link(link)
@@ -353,6 +367,7 @@ async def vid_download(query):
     thumb = f"https://i.ytimg.com/vi/{data['id']}/hqdefault.jpg"
     duration = data.get("duration") or "♾"
     return video, thumb, title, link, duration
+        
 
 async def dl_playlist(chat, from_user, link):
     # untill issue get fix
