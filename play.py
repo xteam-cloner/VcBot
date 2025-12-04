@@ -1,4 +1,3 @@
-# --- DI vcbot/play.py (Versi Stabil dengan Download Lokal) ---
 
 import re,os
 from telethon.tl import types
@@ -81,12 +80,12 @@ async def play_music_(event):
             await xx.reply(
                 text,
                 file=thumb,
-                link_preview=False,
+                link_preview=True,
                 parse_mode="html",
             )
             await xx.delete()
         except ChatSendMediaForbiddenError:
-            await xx.eor(text, link_preview=False)
+            await xx.eor(text, link_preview=True)
             
         if thumb and os.path.exists(thumb):
             os.remove(thumb)
@@ -98,7 +97,7 @@ async def play_music_(event):
         add_to_queue(chat, local_source, song_name, link, thumb, from_user, duration)
         
         return await xx.eor(
-            f"▶ Ditambahkan 🎵 <a href={link}>{song_name_display}</a> ke antrian di urutan **#{list(VC_QUEUE[chat].keys())[-1]}**.",
+            f"▶ Ditambahkan 🎵 <a href={song_name_display}</a> ke antrian di urutan #{list(VC_QUEUE[chat].keys())[-1]}.",
             parse_mode="html",
         )
 
